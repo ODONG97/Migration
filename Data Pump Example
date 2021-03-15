@@ -1,0 +1,234 @@
+# ACCESS_METHOD
+Default : AUTOMATIC
+Perpose : 특정 method를 사용하여 데이터를 Export 하도록 지시
+Syntax and Description
+ ACCESS_METHOD=[AUTOMATIC | DIRECT_PATH | EXTERNAL_TABLE | INSERT_AS_SELECT ]
+  지정된 ACESS_METHOD로 테이블의 데이터를 Export 할 수 없는 경우, 해당 데이터에 대한 오류를 표시하고 다음 작업 항목으로 계속 진행
+  INSERT_AS_SELECT METHOD는 NETWORK MODE에서만 동작
+Restrictions
+ 12.2.0.1 이상에서만 Network 모드에서 ACCESS_METHOD Parameter 사용 가능
+Example
+ expdp hr DIRECTORY=dpump_dir1 DUMPFILE=expdat.dmp SCHEMAS=hr ACCESS_METHOD=EXTERNAL_TABLE
+-------------------------------------------------------------------
+# ATTACH
+Default : 현재 사용자 스키마에 있는 작업
+Purpose : Client Session을 기존 Export 작업에 연결하고 자동으로 대화식 명령 인터페이스에 배치
+Syntax and Description 
+    ATTACH [=[schema_name.]job_name]
+Example
+    expdp hr ATTACH=hr.export_job
+expdp hr ATTACH=hr.export_job
+JOB : EXPORT_JOB
+  Owner : HR
+  Operation : EXPORT
+<중략>
+Export > 
+-------------------------------------------------------------------
+# CLUSTER
+Default : YES
+Purpose : Data Pump가 Oracle RAC 리소스를 사용하고 다른 Oracle RAC Instance에서 Worker Process의 시작 여부를 결정
+Syntax and Description
+    CLUSTER=[ YES | NO ]
+    특정 서비스를 지정하고 해당 서비스에 대해 정의된 인스턴스에서만 실행되도록 작업자 프로세스를 제한하려면 CLUSTER = YES 함께 
+    SERVICE_NAME Parameter 사용
+    CLUSTER 를 사용하면 성능이 저하 될 수 있으므로 소규모 작업의 경우 시작되는 인스턴스에서 작업이 실행되도록 제한하기 위해
+    CLUSTER = NO 를 지정을 권고
+Example
+    expdp hr DIRECTORY=dpump_dir1 DUMPFILE=hr_clus%U.dmp CLUSTER=NO PARALLEL=3
+
+CLUSTER=YES  -> Worker Process가 Node1,2 각각 실행
+    expdp system/oracle dumpfile=cluster_%U.dmp directory=data_dir logfile=log_dir:cluster.log full=y parallel=4 
+    CLUSTER=YES(DEFAULT)
+CLUSTER=NO   -> 작업을 시작한 인스턴스에서만 Worker 프로세스 실행
+    expdp system/oracle dumpfile=cluster_%U.dmp directory=data_dir logfile=log_dir:cluster.log full=y parallel=4 CLUSTER=NO
+-------------------------------------------------------------------
+# DUMPFILE
+Purpose : export 작업의 생성될 Dump File Set 이름을 지정
+Syntax and Description
+    DUMPFILE=[directory_object:]file_name [, ...]
+    여러 개의 file_name 을 쉼표로 구분 된 목록 또는 별도의 DUMPFILE 매개 변수로 제공 할 수 있고, 파일 이름에 확장자가 없으면 
+    Export는 기본 파일 확장자 .dmp를 사용 
+Example
+    expdp hr SCHEMAS=hr DIRECTORY=dpump_dir1 DUMPFILE=dpump_dir2:exp1.dmp, exp2%U.dmp PARALLEL=3
+Restrictions 
+    Any resulting dump file names that match preexisting dump file names generate an error, and the preexisting dump files   
+    are not overwritten. You can override this behavior by specifying the Export parameter REUSE_DUMPFILES=YES.
+ORA-39000: bad dump file specification
+ORA-39402: The log or SQL file cannot overwrite dump file "/oracle/dump01/query_hr_exp.dmp".
+-------------------------------------------------------------------
+# ESTIMATE_ONLY => 사이즈 및 수행 시간 사전 확인 가능
+expdp system/oracle directory=test_dir full=y estimate_only=yes logfile=estimate.log
+Export > status => 동일하게 master 프로세스와 worker 프로세스가 동작하는 것을 확인. = State : EXECUTING
+
+$ expdp system/oracle directory=test_dir dumpfile=cluster_%U.dmp logfile=content.log estimate_only=yes job_name=cluster_test
+
+Connected to: Oracle Database 11g Enterprise Edition Release 11.2.0.4.0 - 64bit Production
+With the Partitioning, Real Application Clusters, Automatic Storage Management, OLAP,
+Data Mining and Real Application Testing options
+ORA-39002: invalid operation
+ORA-39201: Dump files are not supported for estimate only jobs.
+-> 11g 기준 ESTIMATATE_ONLY 사용 시 덤프 파일이 필요 없기 때문에 덤프 파일을 지정할 경우 ORA-39201 출력. 
+-------------------------------------------------------------------
+# EXCLUDE
+Purpose
+     작업에서 제외하려는 object 및 object type을 지정하여 내보내는 METADATA를 필터링.
+     EXCLUDE 문에 작성된 object가 제외되면 모든 종속 object도 제외됨. 예를 들어 테이블을 제외하면 테이블의 모든 인덱스와 트리거도 제외.
+     name_clause는 선택 사항, 오브젝트 이름에 대한 필터로 사용되는 SQL 표현식으로 사용.
+     ex) EXCLUDE = INDEX : "LIKE 'EMP %'“ = 이름이 EMP로 시작하는 모든 인덱스 제외
+Syntax and Description
+   EXCLUDE=object_type[:name_clause] [, ...]
+   EXCLUDE = GRANT를 지정하면 모든 object 유형 및 시스템 권한 부여에 대한 object 부여가 제외됩니다.
+   EXCLUDE = USER를 지정하면 사용자 스키마 내에 포함 된 개체가 아닌 사용자 정의 만 제외됩니다.
+Example
+  $ expdp hr directory=test_dir dumpfile=static_dump.dmp exclude=statistics logfile=static.log
+Restrictions 
+     The EXCLUDE and INCLUDE parameters are mutually exclusive.
+-------------------------------------------------------------------     
+# FILESIZE -> Data Pump의 FILESIZE 옵션 설정 보다 OS의 파일 사이즈 설정 값이 우선 순위가 높음.
+Purpose
+    각 Dump File 의 최대 크기를 지정.
+    각 Dump File 에 대한 크기에 도달하면 대체 변수를 포함하거나 더 많은 Dump File Set이 할당 된 경우 해당 파일을 닫고
+    새 파일을 작성하려고 시도함.
+Syntax and Description
+    FILESIZE=integer[B | KB | MB | GB | TB]
+    Bytes is the default.
+Example
+    $ expdp hr directory=test_dir dumpfile=static_dump.dmp exclude=statistics logfile=static.log
+Restrictions 
+    파일의 최대 크기는 16TB
+    파일의 최소 크기는 4KB
+-------------------------------------------------------------------
+# INCLUDE    
+Purpose
+    Object 및 Object type 을 지정하여 export 되는 METADATA를 필터링. 
+    지정된 Object와 모든 종속된 Object가 export 됨(Object 에 대한 권한도 포함)
+    name_clause에 작성되는 기존 Object와 정확히 일치해야 함.
+      Example) 
+      INCLUDE=TABLE:”IN (‘EMPLOYEES’, ‘DEPARTMENTS’)” 
+      INCLUDE=PROCEDURE INCLUDE=INDEX:”LIKE ‘EMP%’”
+Syntax and Description
+    INCLUDE = object_type[:name_clause] [, ...] 
+Example
+  $ expdp hr INCLUDE=TABLE DUMPFILE=dpump_dir1:exp_inc.dmp NOLOGFILE=YES
+Restrictions 
+    SYS가 소유 한 오브젝트에 대한 권한은 절대 export 되지 않음.
+    The EXCLUDE and INCLUDE parameters are mutually exclusive.
+-------------------------------------------------------------------
+# FLASHBACK_TIME : 사용자 실수에 의한 손상된 데이터를 Database의 크기와 상관 없이 복구할 수 있는 기능
+Purpose
+    지정된 시간과 가장 일치하는 SCN을 찾음. export 작업은 이 SCN과 일치하는 데이터로 수행.
+    TO_TIMESTAMP 값은 인용 부호로 묶여 있으므로 이 매개변수를 parfile 에 입력 하는 것이 가장 유리함.
+    현재 시스템 시간을 기준으로 일관된 export를 시작.
+Syntax and Description
+    FLASHBACK_TIME="TO_TIMESTAMP(time-value)“
+Example
+    DIRECTORY=dpump_dir1 
+    DUMPFILE=hr_time.dmp 
+    FLASHBACK_TIME="TO_TIMESTAMP('27-10-2012 13:16:00', 'DD-MM-YYYY HH24:MI:SS')“
+Restrictions 
+    FLASHBACK_TIME and FLASHBACK_SCN are mutually exclusive.
+    
+SQL > alter database datafile '/oradata2/undotbs02.dbf' resize 20m;
+      select tablespace_name, file_name, bytes/1024/1024 FILE_MB
+      from dba_data_files
+      where tablespace_name='UNDOTBS2';       /// (UNDO_TABLESPACE Size 변경)
+      
+SQL > alter system set undo_tablespace='UNDOTBS2';
+      show parameter undo       /// (UNDO_TABLESPACE 변경)
+      
+SQL > select * 
+      from usr_is.test_table 
+      where unique_col = 1000000;
+SQL > update usr_is.test_table
+      set user_email = 'test000@oh.com'
+      where unique_col = 1000000;
+SQL > select *
+      from usr_is.test_table
+      where unique_col = 1000000;       /// UPDATE 1건 실행
+      
+SQL > select *
+      from usr_is.test_table
+      as of timestap to_timestamp('2020-01-01 19:10:29','yyyy-mm-dd hh24:mi:ss')
+      where unique_col = 1000000;       /// UPDATE 전 시점 조회
+      
+● Expdp 수행 후 UPDATE를 대량 수행하여 UNDO_TABLESPACE OVERWRITE 하도록 유도
+expdp parfile=flashback_time.par 
+
+userid=system/oracle
+directory=test_dir
+dumpfile=flashback_time.dmp
+logfile=flashback_time.log
+job_name=flashback_time
+tables=usr_is.test_table
+logtime=all
+flashback_time="TO_TIMESTAMP('2020-01-01 19:10:09','YYYY/mm/dd HH24:MI:SS')"
+-------------------------------------------------------------------
+# LOGTIME
+Default: No timestamps are recorded
+Purpose
+    Job 수행 중 시간이 출력될 수 있도록 지정. 
+    타임 스탬프를 사용하여 데이터 펌프 작업의 여러 단계 사이의 경과 시간을 파악할 수 있음. 
+    성능 문제를 진단하고 향후 유사한 작업의 시간을 추정하는 데 도움이 될 수 있음. 
+Syntax and Description
+    LOGTIME=[NONE | STATUS | LOGFILE | ALL]
+    • NONE: No timestamps on status or log file messages (same as default) 
+    • STATUS: Timestamps on status messages only 
+    • LOGFILE: Timestamps on log file messages only 
+    • ALL: Timestamps on both status and log file messages
+Example
+ expdp hr DIRECTORY=test_dir DUMPFILE=LOGTIME.dmp SCHEMAS=hr LOGTIME=ALL
+   01-JAN-20 20:17:32.396: Processing object type TABLE_EXPORT/TABLE/TABLE
+   01-JAN-20 20:17:35.066: Processing object type TABLE_EXPORT/TABLE/INDEX/INDEX
+-------------------------------------------------------------------
+# NETWORK_LINK(EXPORT)
+Purpose
+    데이터베이스 링크로 식별되는 데이터베이스에서 export 를 가능하게 하여 소스 데이터베이스 인스턴스의(REMOTE) 데이터는  
+    연결된 데이터베이스 인스턴스에(LOCAL) 설정된 덤프 파일에 기록. 
+Syntax and Description
+    NETWORK_LINK=source_database_link
+Example
+    expdp hr DIRECTORY=dpump_dir1 NETWORK_LINK=source_database_link DUMPFILE=network.dmp LOGFILE=network.log
+Caution: 
+   암호화되지 않은 네트워크 링크를 통해 export를 수행하면 데이터베이스에서 암호화 된 경우에도 모든 데이터가 일반 평
+   문 값으로 export 됨. 
+Restrictions 
+   - 10g 기준 NETWORK_LINK를 사용하여 long 은 export/import 할 수 없음. 
+   - 12cR2 기준으로 LONG TYPE 컬럼을 지원(12cR2-Changes in This Release for Oracle Data‐ base Utilities)
+   
+SQL> select grantee, granted_role from dba_role_privs
+  2  where granted_role='EXP_FULL_DATABASE';     /// 작업을 수행한 USR_TEST에 EXP_FULL_DATABASE 역할을 가지고 있음
+   
+-------------------------------------------------------------------
+# NETWORK_LINK(IMPORT)
+Default: NO Default
+Purpose
+    데이터베이스 링크로 식별되는 데이터베이스에서 Import 를 가능하게 하여 소스 데이터베이스 인스턴스의(REMOTE) 
+    데이터는 연결된 데이터베이스 인스턴스에(LOCAL) 기록
+Syntax and Description
+    NETWORK_LINK=source_database_link
+Example
+    > imp에 hr TABLES=employees DIRECTORY=dpump_dir1 NETWORK_LINK=source_database_link EXCLUDE=CONSTRAINT
+Caution: 
+     암호화되지 않은 네트워크 링크를 통해 export를 수행하면 데이터베이스에서 암호화 된 경우에도 모든 데이터가 일반 평
+     문 값으로 export 
+Restrictions 
+   작업을 실행중인 USER 가 대상(LOCAL) 데이터베이스에서 DATAPUMP_IMP_FULL_DATABASE 역할을 갖는 경우 
+   해당 사용자는 소스(REMOTE) 데이터베이스에서도 DATAPUMP_EXP_FULL_DATABASE 역할이 필요
+
+
+
+
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
