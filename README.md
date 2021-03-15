@@ -79,14 +79,17 @@ SYS@.. > select * from dba_directories;
 
 # Oracle Data Pump - Expdp 실행 모드
 1. Database
-- Full 파라미터를 사용하며 데이터베이스 전체를 Export
+- Full 파라미터를 사용하며 데이터베이스 전체를 Export, DBA 권한이어야 가능, export_full_database 권한을 가지고 있어야 수행 가능
 - DBA 권한을 가지고 있거나 Export_Full_Database 권한을 가지고 있어야 수행 가능.
 2. Schemas -> 데이터베이스를 구성하는 레코드의 크기, 키의 정의, 레코드와 레코드의 관계, 검색 방법 등을 정의한 것
+   export에서 owner 파라미터랑 같은 schemas parameter를 사용하여 특정 스키마 전체를 export 받음
 - Schemas 파라미터를 사용하며 특정 스키마 전체를 Export
 3. Table
 - Tables 파라미터를 사용하여 여러 개의 테이블을 Export 받으려면 , 로 구분
 4. Tablespace -> 테이블 및 인덱스를 저장해놓은 오라클의 논리적인 공간
+- transport_tablespace 파라미터를 사용하면 테이블, 테이블 스페이스의 메타 데이터까지 export하여다른 서버로 테이블 스페이스 전체를 이동 시킬 때 아주 유용함 (단, 양쪽 OS, Block size, Characterset이 동일해야 함)
 - Tablespace를 파라미터로 사용하며 해당 Tablespace에 속한 모든 Table을 받을 수 있다.
+
 
 # Oracle Data Pump (+export/Import)
 # Expdp(Export Data Pump) 실행 예제
