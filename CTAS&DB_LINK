@@ -10,8 +10,175 @@ Target(Tablespace(Data files)) -> Script(CTAS) -> DB LINK(Target->Source)     �
                         <-----------------------------------------------------------Import
 Local = tns.Ora    /   Select해서 나오는 table 이관
 
+# 주요 처리 내용 : 대량의 특정 Table을 빠르게 이관 시 사용 또는 이기종 Migration시 사용
+# 장점 : 가장 빠른 성능 보장, SQL 및 DBMS에 대한 기초 지식만으로도 바로 활용 가능
+# 단점 : Table 별로 Migration Script를 생성해야 함, Migration 검증 Script 준비가 쉽지 않음
+# 사전 준비 사항 : Table 별로 Migration Script 작성, Source와 Target간의 DB Link 필요
+
 # Script 추출 과정
 1. Table 생성 후 Script 추출
 2. Data Loading : INSERT ~ SELECT ~ 구문 추출
 3. Long, Raw, Lob Type Table Export 용 Parfile 생성 후 Export
-                        
+4. Index 생성 Script 추출
+5. 기타 Object 생성 Script 추출
+
+# Script 수행 과정
+1. Table, Index Nologging, Parallel 변경
+2. Table 생성
+3. Data 이관, Lob Table Import
+4. Index 생성 -> Rebuild
+5. 제약조건 생성
+6. Table Logging, Index Logging No Parallel 변경
+
+# Test 정보
+[Source DB]
+SQL > select instance_name, version from v$instance;
+Target DB
+SQL > select instance_name, version from v$instance;
+
+# CTAS 작업 준비
+1. Target DB Status Check
+-> Network Speed Check, No Archive Mode, Undo, Temp Size, User 별 Table 별 Segment Size 고려
+- Undo 사이즈는 제일 큰 사이즈의 Table 사이즈만큼 조절하거나 불가능하면 해당 Table은 DDL문으로 수행 ( Create table table_name as select * from ~ )
+- Script 병렬 수행 시 사이즈 별 분류
+2. User, TBS 생성
+- TableSpace 생성 시 Uniform 옵션을 사용하여 Extent 할당을 조절하면 속도 면에서 이득을 볼 수 있음
+- 그 외 소스 DB 기준으로 Script를 생성하여 일괄 생성
+- 변동사항 유무를 꼭 체크하여 End User 요청에 따라 다시 작업하는 일이 없도록 함
+[Source DB]
+SQL > select username, account_status 
+      from dba_users
+      where account_status='OPEN' and username not in ('SYS','SYSTEM');
+[Target DB]
+SQL > create tablespace HR datafile '/ORACLEDB01/oradata/RBTDBN/hr01.dbf' size 1g autoextend on;
+SQL > create user HR identified by oracle default tablespace HR;
+SQL > grant dba, connect to HR
+3. DB Link 생성
+- Target DB에서 Source DB로 TNS 세팅 후 DB Link 생성
+ㄴ create database link DBLINK_NAME connect to USERNAME identified by PASSWORD using 'TNS alias';
+- Script 병렬 수행 시 DB link를 여러 개 생성하여 각각 배정 하는 게 효과적인가 ?
+ㄴNIC 가 한 장일 때는 효과 없음 
+ㄴ효과를 보려면 DB Link 당 NIC 를 따로 할당해서 사용
+ㄴSQL*Net more message/data from/to dblink : wait event 는 네트워크 속도 이슈로 판단
+-11g 이상인 경우에는 대소문자 구문 이슈가 있으므로 DB Link 생성 시 주의.
+ㄴ이슈가 있을 경우 대소문자 구분 기능을 OFF 하기 위해서는 alter system set sec_case_sensitive_logon=FALSE; 적용 후 진행
+ㄴ12cR2 경우 alter system set sec_case_sensitive_logon=FALSE;  적용 불가 (Doc ID 2040705.1) 
+[TNS Setting]
+CTAS =
+ (DESCRIPTION =
+ (ADDRESS = (PROTOCOL = TCP)(HOST=oracle12c)(PORT=1521))
+ (CONNECT_DATA=
+  (SERVER=DEDICATED)
+  (SERVER_NAME= ..)))
+[DB Link 생성]
+SQL > conn hr/oracle
+SQL > create database link CTAS connect to hr identified by oracle using 'CTAS';
+4-1. Table 생성 Script 추출
+- 관련 툴(Orange, Toad)을 사용하여 Script 생성
+ㄴ Table 생성 스크립트 추출 시 Comment를 제외한 모든 관련 Object는 제외
+ㄴ PK, FK, Trigger는 반드시 확인하여 같이 생성되는 일이 없도록 한다.
+- Target DB에서 Script를 이용하여 테이블 생성 Script 추출
+ㄴ Script 생성 Path 수정 , DB Link 이름 수정
+ㄴ 그 외 CTAS를 이용한 마이그레이션이 불가능한 타입의 Table List를 따로 정리
+- 스크립트 수행 전 TableSpace 할당에 변경 사항이 있는지 확인하여 수정 후 수행
+- 생성 전 Nologging 옵션을 추가하거나, 테이블 생성 후 데이터 Insert 전에 Nologging 모드로 변경
+- Log Table Export를 위한 Parfile을 생성하여 Export
+SQL > set pagesize 1000
+      set head off
+      set linesize 100
+      spool /home/oracle/script/ctas/parfile_lob_table
+      spool off
+-----
+create table [REGIONS,HINT,LOCATIONS,HISTORY,DEPARTMENTS] tablespace HR
+as select * from REGIONS@ctas where 1=2;
+-----
+4-2. INSERT ~ SELECT ~ 구문 추출
+- 서버 성능을 고려해서 적절히 Parallel Hint 사용
+- Append Hint와 Table logging Mode에 따른 undo, redo 생성량 차이
+● direct path load + logging = no undo, but full redo
+● direct path load + nologging = no undo, almost no redo 
+● (exceptions are space transactions and block invalidation record)
+● conventional path load + loggging = full undo, full redo
+● conventional path load + nologging = full undo, full redo 
+● (i.e. nologging has no effect if direct path is not used)
+- No Archive Log에서는 Direct Path I/O 사용 시 Minimal Logging, Archive Log에서는 Nologging 필수
+- Insert 가 Direct Path I/O ( Append Hint ) 가 가능한 이유는 Insert 는 새로운 데이터를 추가하는 작업
+- 새로운 데이터의 추가이기 때문에 데이터 파일 (정확하게 말하면 세그먼트의 High Watermark 다음부터) 에 직접(Direct) 쓰는 것이 가능
+HWM 다음부터 Extent를 일괄 생성하므로 세그먼트 사이즈가 불필요하게 커질 수 있으니 주의
+- Update나 Delete는 기존에 존재하는 데이터에 대한 변경.
+    데이터 파일에 직접 기록하는 것이 따라서 Update/Delete는 반드시 Conventional Path I/O를 사용
+    즉 Append Hint는 Insert ... Select 구문에서만 의미가 있으며 Select, Update, Delete, Insert Into Values 구문에서는 의미가
+    없음
+- 11gR1 부터는 Insert Into Values 구문에서 append 힌트 사용 가능
+- 11gR2 부터는 Insert Into Values 구문에서 append_values 힌트 사용하여 Direct Path I/O 가능
+-----
+insert /*+ append */ into LOCATIONS
+select /*+ parallel (LOCATIONS, 4) */ * from LOCATIONS@ctas;  //LOCATIONS, JOB_HISTORY, EMPLOYEES
+-----
+4-3. INDEX 생성 Script 
+- 관련 툴(Orange, Toad)을 이용하여 Script 생성&수정
+- Index 생성 Script 추출
+ㄴ Logging -> Nologging Parallel 4
+ㄴ Usable 옵션도 같이 추출하여, Unusable로 수정하여 생성한 다음 Rebuild
+  ㄴ 바로 Create 하지 않고 Unusable로 생성 후 Rebuld 하는 이유
+   - 보통의 경우 Create index 명령은 테이블 full scan 후 그 결과를 Sort 해서 인덱스 생성
+   - Alter index... Rebuild 명령은 인덱스를 fast full scan을 하고 그 결과를 Sort 해서 Index 생성
+   - 인덱스 크기가 테이블 크기 보다 작을 경우에만 fast full scan, 인덱스가 크다고 판단되면 테이블 full scan
+   - 통상적으로 인덱스 크기가 작은 경우가 많기 때문에 Rebuild 작업이 더 빠름
+   
+-----( INDEX 생성 Script 추출)
+SQL > set lines 333 / set pagesize 1000 / set head off / set long 999999 / set linesize 125
+      spool /home/oracle/script/ctas/cr_index.sql
+select dbas_metadata.get_ddl(object_type, object_name, owner) txt
+from dba_objects 
+where object_type = 'INDEX' and owner = 'HR';
+spool off
+
+CREATE UNIQUE INDEX "HR"."EMP_EMAIL_UK" ON "HR"."EMPLOYEES" ("EMAIL")
+PCTFREE 10 INITRANS 2 MAXTRANS 255 COMPUTE SYATISTICS
+STORAGE(INITIAL 65536 NEXT 1048576 MINEXTENTS 1 MAXEXENTS 2147483645
+PCTINCREASE 0 FREELISTS 1 FREELIST GROUPS 1
+BUFFER_POOL DEFAULT FLASH_CACHE DEFAULT CELL_FLASH_CACHE DEFAULT)
+TABLESPACE "HR"
+UNUSABLE
+NOLOGING
+PARALLEL 4;
+
+SQL > set head off
+      set pagesize 2000
+      set linesize 100
+      spool /home/oracle/script/cats/ind_rebuild.sql
+    select 'alter index '||owner||','||index_name|| ' rebuild parallel 4 ; ' from dba_indexes where owner in ('HR');
+      spool off
+-----
+
+-----(INDEX Rebuild Script 추출)
+SQL > set head off
+      set pagesize 2000
+      set linesize 100
+      spool /home/oracle/script/ctas/ind_rebuild.sql
+    select 'alter index '||owner||','||index_name|| ' rebuld parallel 4 ; ' from dba_indxes where owner in ('HR');
+      spool off
+-----
+
+4-4. 기타 Object 생성 Script 추출
+- 관련 툴(Orange, Toad)을 이용하여 Script 생성 & 수정 (Constraint, Procedure, Trigger, Function, View etc)
+-> Cr_object.sql
+- Data Pump를 사용하여 기타 Object Export / Import
+= expdp hr/oracle directory=DATA_PUMP_DIR dumpfile=meta.dmp logfile=meta.log schemas=HR include=CONSTRAINT,PROCEDURE,SEQUENCE,VIEW,TRIGGER
+
+4-5. Logging / nologging, parallel / noparallel 세팅 Script 추출
+- Index Logging, Noparallel 변경 Script
+SQL > set head off
+      set pagesize 2000
+      set linesize 100
+      spool /home/oracle/script/ctas/ind_logg.sql
+   select 'alter index '||owner||','||index_name|| ' logging noparallel;'
+   from dba_
+
+
+   
+
+
+
+
