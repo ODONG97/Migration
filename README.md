@@ -81,8 +81,60 @@ SYS@.. > select * from dba_directories;
 1. Database
 - Full 파라미터를 사용하며 데이터베이스 전체를 Export
 - DBA 권한을 가지고 있거나 Export_Full_Database 권한을 가지고 있어야 수행 가능.
-2. Schemas
+2. Schemas -> 데이터베이스를 구성하는 레코드의 크기, 키의 정의, 레코드와 레코드의 관계, 검색 방법 등을 정의한 것
 - Schemas 파라미터를 사용하며 특정 스키마 전체를 Export
 3. Table
 - Tables 파라미터를 사용하여 여러 개의 테이블을 Export 받으려면 , 로 구분
+4. Tablespace -> 테이블 및 인덱스를 저장해놓은 오라클의 논리적인 공간
+- Tablespace를 파라미터로 사용하며 해당 Tablespace에 속한 모든 Table을 받을 수 있다.
 
+# Oracle Data Pump (+export/Import)
+# Expdp(Export Data Pump) 실행 예제
+Full Export
+ expdp system/oracle dumpfile=full.dmp directory=dump full=y logfile=full.log job_name=fullexp
+Metadata Export
+ expdp system/oracle dumpfile=metadata.dmp directory=dump full=y content=metadata_only logfile=meta.log job_name=meta
+Schemas Export
+ expdp system/oracle dumpfile=test.dmp directory=dump schemas=TEST job_name=test logfile=test.log
+Ex) Scott 계정의 emp, dept 테이블만 백업 받기
+ expdp scott/tiger tables=emp,dept directory=datapump job_name=test1 dumpfile=emp_dept
+Ex) Scott Schema 전부 백업 받기
+ expdp scott/tiger schemas=scott directory=datapump dumpfile=scott.dmp
+# Impdp 실행 예제
+Full Import
+ Impdp system/oracle dumpfile=full.dmp directory=dump full=y logfile=fullimp.log job_name=fullimp
+Metadata Improt(Metadata만 export한 파일)
+ Impdp system/oracle dumpfile=metadata.dmp directory=dump full=y sqlfile=metadata.sql logfile=metadata.log
+Metadata Improt(Full export한 파일)
+ Impdp system/oracle dumpfile=full.dmp directory=dump full=y content=metadata only sqlfile=metadata.sql logfile=metadata.log
+Schemas Import
+ impdp system/oracle dumpfile=full.dmp directory=dump schemas=TEST logfile=test.log job_name=test
+ impdp system/oracle dumpfile=test.dmp directory=dump full=y logfile=test.log job_name=test
+ 
+ # Impdp 실행 옵션
+ 데이터 적재에만 사용되는 옵션(TABLE_EXITS_ACTION) : export/import 기능에서 import의 ignore기능이 datapump에서는 TABLE_EXITS_ACTION 옵션이다.
+ SKIP : 동일 이름의 테이블이 존재할 경우 해당 테이블에 대한 데이터 적재 작업 생략
+ APPEND : 동일 이름의 테이블이 존재할 경우 데이터를 해당 테이블에 추가로 적재
+ REPLACE : 동일 이름의 테이블이 존재할 경우 해당 테이블을 제거한 후 재생성하여 데이터 적재
+ TRUNCATE : 동일 이름의 테이블이 존재할 경우 해당 테이블의 데이터를 DELETE한 후 데이터 적재 (★)
+ 
+ # Attach 옵션
+ ADD_FILE : 추출 파일(DUMPFILE) 추가
+ CONTINUE_CLIENT : 데이터 펌프 작업에 대한 진행 로그 확인
+ EXIT_CLIENT : 데이터 펌프의 클라이언트 관리 세션 종료
+ KILL_JOB : 데이터 펌프 작업을 삭제(작업 재시작 불가능) (★)
+ PARALLEL : 병렬 프로세싱 옵션 지정
+ START_JOB : 데이터 펌프 작업 재시작 (★)
+ STOP_JOB : 수행중인 데이터 펌프 작업 중단 (작업 재시작 가능)(★)
+ 
+ # 작업 예상 시간 추출하기
+ $ sqlplus /as sysdba
+ SQL> select sid, serial#, sofar, totalwork
+      from v$session_longops
+      where opname='DATAPUMP2' <-Job_name을 대문자로 입력
+      and sofar != totalwork;
+     
+ 
+ 
+ 
+ 
