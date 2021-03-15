@@ -214,6 +214,8 @@ Caution: 
 Restrictions 
    작업을 실행중인 USER 가 대상(LOCAL) 데이터베이스에서 DATAPUMP_IMP_FULL_DATABASE 역할을 갖는 경우 
    해당 사용자는 소스(REMOTE) 데이터베이스에서도 DATAPUMP_EXP_FULL_DATABASE 역할이 필요
+   
+   
 
 
 
