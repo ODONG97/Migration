@@ -174,7 +174,114 @@ SQL > set head off
       set linesize 100
       spool /home/oracle/script/ctas/ind_logg.sql
    select 'alter index '||owner||','||index_name|| ' logging noparallel;'
-   from dba_
+   from dba_indexes@ctas where owner in ('HR');
+     spool off
+
+5. 전체 수행 Script 작성 및 실행
+- 시스템 성능에 여유가 있다면, 테이블, 인덱스 관련 스크립트 분할하여 수행
+- 테스트 마이그레이션 시 모니터링하며, wait event 등을 관찰하여 조치
+- 기타 오브젝트는 스크립트로 수행하거나 Datapump로 Import
+- LOB Type Table은 기존에 생성 해둔 Parfile로 Export Import로 이관
+--------(전체 수행 Script 작성 및 실행)
+ls -al
+( cr_index.sql / create_table.sql / ind_logg.sql / ind_rebuild.sql / table_ctas.sql / table_logging.sql / table_nologging.sql )
+
+vi real.sql
+alter session enable parallel dml;
+set echo on
+set timing on
+spool real.out
+@conn
+@create_table.sql
+@table_nologging.sql
+@table_ctas.sql
+@cr_index.sql
+@ind_rebuild.sql
+--@cr_object.sql(*tool을 통해 생성했을 경우 추가)
+impdp hr/oracle directory=DATA_PUMP_DIR dumpfile=meta.dmp logfile=metaimp.log schemas=HR include=CONSTRAIN,PROCEDUR,SEQUENCE,VIEW,TRIGGER
+@table_logging.sql
+@ind_logg.sql
+( @?/rdbms/admin/utlrp.sql )
+spool off
+
+SQL > @real
+---------
+
+6. 이관 검증
+- 스키마별 Object Counting
+- Invalid Object List Check
+- Table Row Counting
+
+------(스키마별 Object Counting)
+select decode(username, '_PUBLIC_', username) username,
+  count(decode(0.object_type, 'TABLE', 0.object_type, '')) Tab,
+  count(decode(0.object_type, 'TABLE PARTITION', 0.object_type, '')) Tab_p,
+  count(decode(0.object_type, 'INDEX', 0.object_type, '')) Ind,
+  count(decode(0.object_type, 'INDEX PARTITION', 0.object_type, '')) Ind_p,
+  count(decode(0.object_type, 'SYNONYM', 0.object_type, '')) Syn,
+  count(decode(0.object_type, 'VIEW', 0.object_type, '')) Vew,
+  count(decode(0.object_type, 'SEQUENCE', 0.object_type, '')) Seq,
+  count(decode(0.object_type, 'PROCEDURE', 0.object_type, '')) Prc,
+  count(decode(0.object_type, 'FUNCTION', 0.object_type, '')) Fnc,
+  count(decode(0.object_type, 'PACKAGE', 0.object_type, '')) Pkg,
+  count(decode(0.object_type, 'PACKAGE BODY', 0.object_type, '')) Pkg_b,
+  count(decode(0.object_type, 'TRIGGER', 0.object_type, '')) Trg,
+  count(decode(0.object_type, 'CLUSTER', 0.object_type, '')) Clu,
+  count(decode(0.object_type, 'DATABASE LINK', 0.object_type, '')) Dbl,
+  count(decode(0.object_type, 'LOB', 0.object_type, '')) Lob,
+from sys.dba_objects 0,
+  (  select username
+     from sys.dba_users
+     union all
+     select 'PUBLIC'
+     from dual
+  )U
+where U.username = O.owner (+)
+and username='HR'
+group by decode(username, 'PUBLIC', '_PUBLIC_', username);
+
+## Source(USERNAME, TAB, TAB_P, IND, IND_P, SYN, VEW, SEQ, PRC, FNC, PKG, PKG_B, TRG, CLU, DBL, LOB)
+## Target(..)
+
+----------
+
+----------(Invalid Object List Check)
+SQL > Select object_name, object_type from user_objects where status='INVALID' order by 1;
+## Source (OBJECT_NAME, OBJECT_TYPE)
+## Target (OBJECT_NAME, OBJECT_TYPE)
+-----
+
+7. 통계 정보 수집 방법
+1) system 통계 직접 생성
+ㄴ SQL > exec dbms_stats.gather_system_stats (gathering_mode=>'INTERVAL', interval=>10);
+2) Fixed Object 통계 직접 생성
+ㄴ SQL > exec DBMS_STATS.GATHER_FIXED_OBJECTS_STATS;
+3) DICTIONARY OBJECT 통계 직접 생성
+ㄴ SQL > exec DBMS_STATS.GATHER_DICTIONARY_STATS;
+4) User Objects 통계 생성
+     Set head Off
+     Set feedback off
+     Spool stats_user.sql
+     SELECT 'EXEC DBMS_STATS.GATHER_SCHEMA_STATS
+     ('|| 'OWNNAME=>' ||CHR(39)|| USERNAME || CHR(39) || CHR(44) || 'CASCADE=>TRUE, ESTIMATE_PERCENT=>25, DEGREE=>8);'
+     AS STRING
+     FROM DBA_USERS
+     Where USERNAME NOT IN ('SYS' , 'SYSTEM' , 'OUTLN' , 'DBSNMP')
+     Order by USERNAME
+     Spool off
+
+# 체크사항
+- Create table as select * from
+ㄴ해당 테이블 스페이스에 소스 Table 사이즈만큼의 Temp Segment 를 생성 후 Rename ( Undo 미사용 )
+ㄴ작업 시 제약조건은 Not Null 만 넘어오기 때문에 나머지는 따로 생성
+ㄴCreate 절 Parallel Hint는 무의미.  Select 절 Parallel Hint 만 효과
+
+- After table creation , insert into ~ select ~
+ㄴTable 생성 시 제약조건, 기본키, 외래키 들은 제외
+ㄴTable 을 Nologging 으로 미리 생성 해두고, Append / Parallel Hint 를 사용하여 Data 를 Migration 
+
+- Network 속도, Big Table 사이즈, Target DB의 Undo, Temp Zize 조정 가능, Archive Mode 변환 가능 등을 체크하여 마이그레이션 시 최적의 성능을 낼 수 있도록 세팅
+
 
 
    
