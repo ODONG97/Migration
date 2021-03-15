@@ -1,0 +1,17 @@
+CTAS(Create Table As Select) & DB_LINK를 통한 Migration
+- Parallel 및 Direct Option 등을 제공
+- Export / Import 와 병행하여 사용 진행
+- 대량의 데이터를 처리하고자 하는 경우에 사용 유용
+- 이 기종 간의 데이터 Conversion(변환) 및 동 기종에서 데이터 Migration 시에도 활용 가능
+                                                          --------------------------------------------->
+
+Target(Tablespace(Data files)) -> Script(CTAS) -> DB LINK(Target->Source)     사전 Export <- Source(Tablespace(Data File))
+                                                                                      │
+                        <-----------------------------------------------------------Import
+Local = tns.Ora    /   Select해서 나오는 table 이관
+
+# Script 추출 과정
+1. Table 생성 후 Script 추출
+2. Data Loading : INSERT ~ SELECT ~ 구문 추출
+3. Long, Raw, Lob Type Table Export 용 Parfile 생성 후 Export
+                        
