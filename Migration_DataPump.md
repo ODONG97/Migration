@@ -36,18 +36,20 @@
 - Expdp and Impdp ( Data Pump 작업을 시작 및 모니터하기 위해 DBMS_DATAPUMP 패키지를 호출하는 Thin Layer )
 - Other Clients ( 이 Infrastructure를 활용하는 응용 프로그램 -> Replication, Transportable, Tablespaces )
 
-# Oracle Data Pump (+ export / import)
-- 기존의 Export / Import Utility 는 여러 플랫폼에서 데이터를 전송하기 위해 사용
+# Oracle Data Pump (+ export / import) : Export,Import를 대체하기 위해 Oracle Database 10g 이후 버전에서 제공되는 Utility
+- 기존의 Export / Import Utility 는 여러 플랫폼에서 데이터를 전송하기 위해 사용, Original Export/Import와 유사한 동작을 하지만 Data Pump가 효율적으로 동작
 - Import 수행 시 단순히 Export 된 Dump 파일에서 각 레코드를 읽고 이를 일반적인 Insert Into 명령어를 사용해서 대상 테이블에 삽입 
 - XML 형식으로 파일을 생성
    ㄴ 기존 SQL문을 사용했던것보다 정교한 필터링과 이행 성능, 속도 개선
 - Oracle 10g 에서 일반적인 SQL 문을 사용하는 대신 독점 API 로 데이터를 빠르게 로드 및 언로드
 - Direct 모드의 Export 보다 10 ~ 15 배 향상 , Import 프로세스 성능도 5 배 향상
 - 정교한 필터링 & 이행 성능
+- Data Pump Export는 데이터베이스에 저장되어 있는 데이터들을 OS의 바이너리 파일로 전환하는 도구
+- Data Pump Import는 바이너리 파일을 데이터베이스 안의 데이터로 전환하는 도구
 
 * Data Pump Key Features *
 - Fast Performance
- ㄴ 기존 Export and Import 유틸리티보다 훨씬 빠르다. Import에서 단순히 export dump 파일에서 레코드를 읽고 일반적인 insert into 명령을 사용하여 대상 테이블에 삽입 하는 대신 Data Pump Import는 Direct Path Method Loading을 사용하기 때문
+ ㄴ 기존 Export and Import 유틸리티보다 훨씬 빠르다(약 2배-Direct Path API가 효과적으로 수정). Import에서 단순히 export dump 파일에서 레코드를 읽고 일반적인 insert into 명령을 사용하여 대상 테이블에 삽입 하는 대신 Data Pump Import는 Direct Path Method Loading을 사용하기 때문(Parallelism의 Level에 따라서 더욱 향상된 Performance를 보여줌)
  - Imporved Management Restart
   ㄴ 모든 Data Pump operation 은 Data Pump job 을 실행하는 스키마에 만들어진 master table 을 가지고 있다. Master table 은 현재 수행중인 모든 export 또는 import 시 객체의 상태정보와 dump file set 에서의 위치정보를 가지고 있다. 이는 갑작스런 job 의 중단에도 job 의 성공적인 종료에 상관 없이 어떤 object 의 작업이 진행 중이었는지 알 수 있게 해 준다. 그래서 master table 과 dump file set 이 있는 한 모든 정지된 data pump job 은 데이터 손실 없이 다시 시작할 수 있다. 
 - Fine-Grained Object Selection
@@ -57,9 +59,57 @@
  @ CONTENT - 로드를 취소 할 데이터를 지정한다.
  @ QUERY - 테이블 부분 집합을 EXPORT 하기 위해 사용
  - Monitoring and Estimating Capability
-  ㄴ Data Pump는 Standard Progress, Error Message를 Log File에 기록 할 뿐 아니라 현재 Operation 상태를 대화식모드로 보여준다.
+  ㄴ Data Pump는 Standard Progress, Error Message를 Log File에 기록 할 뿐 아니라 현재 Operation 상태를 대화식모드로 보여준다. Job 의 completion percentage 를 측정하여 보여주며 초 단위의 지정한 time period 에 따라 자동으로 update 하여 표시한다. 1 개 이상의 client 가 running job 에 attach 할 수 있기 때문에 업무환경에서 job 을 실행하고, detach 한 후 집에 가서 job 을 reattach 하여 끊김 없이 모든 job 을 모니터링 할 수 있다. 모든export job이 시작할 때 대략적인 전체unload 양을 측정해 준다. 이는 사용자가 dump file set을 위한 충분한 양의 disk space를 할당할 수 있게 한다. 
  - Network Mode
-  ㄴ Data Pump Export and Import는 job의 source가 리모트 인스턴스일 경우 network mode를 지원한다.
+  ㄴ Data Pump Export and Import는 job의 source가 리모트 인스턴스일 경우 network mode를 지원한다. Network을 통해 import를 할 때 source가 dump file set이 아닌 다른 database에 있기 때문에 dump file이 없다. Network 를 통해 export 를 할 때 souce 가 다른 시스템에 있는 read-only database 일 수 있다. Dumpfile 은 local(non-networked)export 처럼 local 시스템에 쓰이게 된다. 
+  
+# Oracle Data Pump 개요
+Master Table, Master Process, Worker Process를 사용하여 작업을 수행 및 진행 상황을 추적
+● Coordination of a job : 모든 Data Pump Export 및 Data Pump Import 작업을 조정하기 위한 Master Process가 생성됩니다. Client와의 통신, Worker Process 생성 및 제어, Logging 작업 수행을 포함
+SQL > select to_char (sysdate, 'YYYY-MM-DD HH24:Ml:SS') "DATE", s.program, s.sid, s.status, s.username, d.job_name, p.spid, s.serial#, p.pid 
+      from v$session s, v$process p, dba_datapump_sessions d
+      where p.addr=s.paddr and s.saddr=d.saddr
+      
+● Tracking Progress Within a Job : Data와 Meta Data가 전송되는 동안 Master Table은 작업 내에서 진행 상황을 추적하는데 사용 / Export 또는 Import 조작을 수행하는 현재 스키마에 테이블로 구현 / Master Table의 존재로 인해 Data Pump 작업의 중지 및 재시작이 가능 / 수행하는 스키마에 Create Table 권핞 및 Master Table을 생성하기 위한 충분한 Tablespace 할당량 필요
+-> Export 작업
+      Master Table은 Dump File Set에 있는 Database Object의 위치 기록
+      작업 동안 Master Table을 빌드하고 유지 관리
+      작업이 끝나면 Master Table의 내용을 Dump File Set에 기록
+-> Import 작업
+      Master Table은 Dump File Set에서 Load 되며 Target Database로 Import 해야하는 Object를 찾기 위한 조작 순서 제어하는데 사용
+
+● Filtering Data and Metadata During a Job : EXCLUDE&INCLUDE 매개 변수를 사용하여 EXPORT&IMPORT 된 Object 유형 필터 가능 / Master Table에 특정 Object는 이름 또는 소유 스키마와 같은 속성 명시 / Object는 Object Class(Table, Index, Directory)에 속함 / Object 유형을 제한 가능 / Data 특정 필터를 지정하여 행도 제한 가능
+   [Master Table]
+      Select BASE_OBJECT_NAME, BASE_OBJECT_SCHEMA, COMPLETED_ROWS, COMPLETION_TIME
+      FROM HR.SYS_EXPORT_SCHEMA_06
+      WHERE PROCESS_ORDER > 0
+      AND DUPLICATE = 0
+      AND OBJECT_TYPE = 'TABLE_DATA';
+
+● Transforming Metadata During a Job : Data Pump Import 매개 변수 Remap_Datafile, Remap_Schema, Remap_Table, Remap_Tablespace, Transform 및 Partition_Options을 사용하여 Meta Data의 변환을 수행할 수 있다.
+
+● Maximizing Job Performance : Data Pump는 병렬로 실행되는 여러 작업자 Process를 사용하여 작업 성능을 향상시킬 수 있다. / PARALLEL Parameter 사용 / 병렬 처리 정도는 작업 중 재설정 가능 / 병렬 처리 설정은 Master Process에 의해 시행 / Oracle Database 11g Enterprise Edition에서만 사용 가능
+   expdp HR/HR DIRECTORY=TEST_DIR DUMPFILE=SCHEMA_%U.DMP PARALLEL=2   
+   SCHEMAS=HR,OE,SCOTT,SH JOB_NAME=SCHEMA_JOB
+
+   SELECT OWNER_NAME,
+       JOB_NAME,
+       OPERATION,
+       JOB_MODE,
+       STATE
+   FROM DBA_DATAPUMP_JOBS;
+   
+● Monitoring Job Status : Client 는 Logging Mode 또는 Interactive-command Mode 로 작업에 attach 할 수 있음 / Logging Mode 에서는 작업에 대한 실시간 세부 상태가 작업 실행 중에 자동으로 표시 / Interactive-command Mode 에서 작업 상태는 요청 시 표시 / Log File 은 작업 실행 중에 선택적으로 기록 / DBM_DATAPUMP_JOBS, USER_DATAPUMP_JOBS, DBA_DATAPUMP_SESSION 뷰 조회
+ - Data Pump 작업은 작업 진행률을 나타내는 V$SESSION_LONGOPS 에 기록
+ - 예상 전송 크기가 포함되며, 전송된 실제 데이터 양을 반영하도록 주기적으로 업데이트
+ - COMPRESSION, ENCRYPTION, QUERY 및 REMAP_DATA 사용은 추정 값의 결정에 반영되지 않음
+
+   SELECT sid, serial#, sofar, totalwork 
+   FROM v$session_longops
+   WHERE opname=‘JOB_NAME'
+   AND sofar != totalwork ;
+
+● Loading and Unloading of Data : 작업자 프로세스는 Meta Data와 Table Data를 Unload하고 Load합니다. Export의 경우 Transportable Tablespace를 사용하는 작업을 제외하고 모든 Meta Data와 Data가 병렬로 Unload 됩니다. Import의 경우 개체를 올바른 종속성 순서로 만들어야 함.
   
 # 사용 전 환경 설정하기
 1. Data Pump 는 Export/Import 와 다르게 유틸리티가 직접 OS 파일에 I/O 를 할 수 없고 오라클 Directory 라는 객체를 통해서 간접으로 접근 가능 
